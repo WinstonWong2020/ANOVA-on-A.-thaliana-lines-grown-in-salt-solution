@@ -1,1 +1,134 @@
+---
+title: "saltANOVA"
+author: "Winston Wong"
+date: "10/26/2020"
+output:
+  html_document: default
+  word_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+__Loading Relevant Packages__
+
+Here we load the relevant packages `tidyverse`, `wesanderson`, `rstatix`,`ggpubr`, `fBasics`, `dplyr`, `car` needed to perform the ANOVA, construct graphs, and manipulate data. 
+
+```{r}
+library(tidyverse)
+library(wesanderson)
+library(fBasics)
+library(dplyr)
+library(car)
+library(rstatix)
+library(ggpubr)
+```
+
+__Loading Relevant Data__
+```{r}
+saltANOVAdata = "https://raw.githubusercontent.com/WinstonWong2020/ANOVA-on-A.-thaliana-lines-grown-in-salt-solution/main/SaltANOVA.csv"
+
+saltANOVA <- read_csv(url(saltANOVAdata))
+```
+
+__Summary Statistics w/Means__
+
+We first save the saltANOVA.csv as a data frame by using the `as.data.frame()` function and saving it in the object titled `saltANOVA`. After this, the `basicStats()` function from the package `fBasics` is used to create a table containing the relevant summary statistics. The table is saved in the object `summary_statistics_table` using the `as.data.frame()` function.
+
+```{r}
+saltANOVA <- as.data.frame(saltANOVA)
+
+summary_statistics <- basicStats(saltANOVA)[c("Mean", "Stdev", "Variance", "Median", "Minimum", "Maximum"),]
+
+summary_statistics_table <- as.data.frame(summary_statistics)
+summary_statistics_table
+
+```
+
+__Checking Distribution of the Data__
+
+The dataset "saltANOVA" is manipulated into a longer format by using the `gather()` function while using `na.rm = T` to omit missing data. The result is saved in the object titled `saltANOVA_longer`.
+
+The dry weights (g) from each group are shown in a boxplot. `ggplot2` in the `tidyverse` package is used to customize and display the boxplot. The mean of the dry weights from each group are marked as a red "X" using `stat_summary(fun="mean" , color="red", shape=4)`. The boxplot is saved in the object titled `dryWeight_boxplot`.
+
+```{r}
+
+saltANOVA_longer <- gather(saltANOVA, na.rm = T)
+
+
+#Boxplot of Dry Weights
+dryWeight_boxplot <- ggplot(saltANOVA_longer, aes(x=key, y=value, fill = key))+
+  geom_boxplot(col="black", outlier.colour = "white")+
+  ggtitle("Boxplots of Dry Weights for Each Line")+
+  labs(y="Dry Weight (g)", x="") +
+  stat_summary(fun="mean", color="red", shape=4)+
+  theme_dark()+
+  theme(legend.position = "none")+
+  scale_fill_manual(values = wes_palette("GrandBudapest2", n = 3))
+  
+
+dryWeight_boxplot 
+```
+
+
+From the boxplots, two outliers are identified. We can check if these outliers are extreme by first using the `group_by()` function and then the `identify_outliers()` function from the `rstatix`package. The result is saved as `outlier_output` and then converted into a data frame by using the `as.data.frame()` function. From the table we can see that the outlier in the control group is extreme.
+
+I have chosen to omit this extreme outlier for the ANOVA. The data set with the omitted value is saved as `saltANOVA_longeromit`.
+```{r}
+#Checking for Extreme Outliers
+outlier_output <- saltANOVA_longer %>% group_by(key) %>% identify_outliers(value)
+
+outlier_table <- as.data.frame(outlier_output)
+
+outlier_table
+
+saltANOVA_longeromit <- saltANOVA_longer[-c(2),]
+
+```
+
+__Running a one-way ANOVA on the Data__
+
+The next step is to run the one-way ANOVA.This is done by using the `aov()` function. We will model the difference in the mean of dry weights (g) as a function of line type. From the output we see that our p-value is less than the significance level of 0.05. We reject the null hypothesis and conclude that the mean biomass for all lines is not the same.
+```{r}
+#H0: The mean biomass for all lines is the same
+#Ha: The mean biomass for all lines is not the same
+one.way <- aov(value~key, data = saltANOVA_longeromit)
+summary(one.way)
+```
+
+__Conducting Post-Hoc tests__
+
+Since our ANOVA test is significant, we can use `TukeyHSD()` to conduct multiple pairwise-comparison between the means of the different lines. From the output, we see that the difference between Line 2 and Control, Line 3 and Control, and Line 3 and Line 2 are significant with an adjusted p-value of 0.022682, 0.0000119, and 0.0063658 respectively.
+
+NOTE: If the extreme outlier in the Control group was not omitted, the difference between Line 2 and Control would not be significant.
+```{r}
+TukeyHSD(one.way)
+```
+
+__Checking for Homogeneity of Variances__
+
+An ANOVA test assumes that the data is normally distributed and that variance across groups are homogeneous. We can test this assumption by using the `leveneTest()` function. Since the p-value is greater than the significance threshold of 0.05, we fail to reject the null hypothesis. We can assume that the variance across groups are homogeneous.
+```{r}
+#H0: Population variances are equal
+#Ha: Population variances are not equal
+leveneTest(value~key, data = saltANOVA_longer)
+```
+
+__Checking Normality__
+
+Another assumption of an ANOVA test is that the residuals are normally distributed. We can test this assumption by first extracting the residuals by using the `residuals()` function and saving the output as `one.way_residuals`. The `shapiro.test()` function is then used to perform an Shapiro-Wilk test on the residuals. Since the p-value is greater than the significance threshold of 0.05, we fail to reject the null hypothesis. We conclude that the residuals are normally distributed.
+```{r}
+one.way_residuals <- residuals(object = one.way)
+
+#H0: Residuals are normally distributed.
+#Ha: Residuals are not normally distributed.
+shapiro.test(x = one.way_residuals)
+```
+
+A normality plot of the residuals can also be used to determine if the residuals are normally distributed. We can create a normality plot by using the `ggqqplot()` function. Most of the points fall on the reference line, indicating the residuals follow an approximately normal distribution.
+```{r}
+ggqqplot(one.way_residuals, title = "Normality Plot of Residuals", shape = 17, color = "plum")
+```
+
 
